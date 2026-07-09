@@ -10,21 +10,27 @@ function mountScrollWorld(container, config) {
     if (!N) return;
 
     // Scroll distances (in vh)
-    const DIVE_SCROLL = config.diveScroll || 1.5;   // scroll per scene dive
-    const CONN_SCROLL = config.connScroll || 0.6;   // scroll per crossfade
-    const TOTAL_VH = N * DIVE_SCROLL + (N - 1) * CONN_SCROLL;
+    const DIVE_SCROLL = config.diveScroll || 1.5;
+    const CONN_SCROLL = config.connScroll || 0.6;
 
     // State
-    let scrollY = 0;
     let ticking = false;
 
-    // ---- Build DOM ----
+    // ---- Helper ----
     function el(tag, cls) {
         const e = document.createElement(tag);
         if (cls) e.className = cls;
         return e;
     }
 
+    // ---- Create spacer to make page scrollable ----
+    const spacer = el('div');
+    spacer.style.height = `${(N * DIVE_SCROLL + (N - 1) * CONN_SCROLL) * 100}vh`;
+    spacer.style.position = 'relative';
+    spacer.style.pointerEvents = 'none';
+    document.body.appendChild(spacer);
+
+    // ---- Build DOM ----
     // Sky
     const sky = el('div', 'sw-sky');
     sky.appendChild(el('div', 'sw-sky__grad'));
@@ -35,7 +41,6 @@ function mountScrollWorld(container, config) {
 
     // Stage
     const stage = el('div', 'sw-stage');
-
     const scenes = [];
     SECTIONS.forEach((s, i) => {
         const scene = el('div', 'sw-scene');
@@ -83,21 +88,22 @@ function mountScrollWorld(container, config) {
     container.appendChild(hint);
 
     // Nav dots
+    const dots = [];
     if (config.nav !== false) {
         const nav = el('div', 'sw-nav');
-        const dots = [];
         SECTIONS.forEach((s, i) => {
             const dot = el('button', 'sw-nav__dot');
             dot.title = s.title || '';
             dot.addEventListener('click', () => {
-                const target = (i * (DIVE_SCROLL + CONN_SCROLL)) / TOTAL_VH;
-                window.scrollTo({ top: target * totalHeight, behavior: 'smooth' });
+                const totalVH = N * DIVE_SCROLL + (N - 1) * CONN_SCROLL;
+                const target = (i * (DIVE_SCROLL + CONN_SCROLL)) / totalVH;
+                const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+                window.scrollTo({ top: target * maxScroll, behavior: 'smooth' });
             });
             nav.appendChild(dot);
             dots.push(dot);
         });
         container.appendChild(nav);
-        SECTIONS._dots = dots;
     }
 
     // Brand
@@ -107,112 +113,108 @@ function mountScrollWorld(container, config) {
         container.appendChild(topbar);
     }
 
-    // ---- Virtual scroll track ----
-    const totalHeight = TOTAL_VH * window.innerHeight / 100;
-    // We use a spacer approach: the body itself is the track
-    // But we need to ensure it's scrollable
-    document.body.style.height = `${totalHeight}px`;
-    document.body.style.position = 'relative';
-
     // ---- Animation loop ----
+    const totalVH = N * DIVE_SCROLL + (N - 1) * CONN_SCROLL;
+
     function update() {
-        scrollY = window.scrollY || window.pageYOffset;
-        const maxScroll = totalHeight - window.innerHeight;
-        const progress = Math.min(scrollY / Math.max(maxScroll, 1), 1);
+        const scrollY = window.scrollY || window.pageYOffset;
+        const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+        const progress = maxScroll > 0 ? Math.min(scrollY / maxScroll, 1) : 0;
 
         // Scrollbar
         scrollFill.style.height = `${progress * 100}%`;
 
-        // Hide hint after first scroll
+        // Hide hint
         if (scrollY > 50) hint.classList.add('hidden');
+        else hint.classList.remove('hidden');
 
-        // Calculate which scene we're in
-        // Each scene takes DIVE_SCROLL vh, connectors take CONN_SCROLL vh
+        // Calculate scene position
         const vh = window.innerHeight;
         let accumulated = 0;
         let activeIdx = 0;
-        let sceneProgress = 0; // 0..1 within current scene dive
+        let sceneProgress = 0;
 
         for (let i = 0; i < N; i++) {
             const diveStart = accumulated;
             const diveEnd = accumulated + DIVE_SCROLL * vh;
-            const connEnd = (i < N - 1) ? diveEnd + CONN_SCROLL * vh : diveEnd;
+            const connEnd = (i < N - 1) ? diveEnd + CONN_SCROLL * vh : diveEnd + 1;
 
             if (scrollY >= diveStart && scrollY < diveEnd) {
-                // Inside this scene's dive
                 activeIdx = i;
                 sceneProgress = (scrollY - diveStart) / (diveEnd - diveStart);
                 break;
             } else if (scrollY >= diveEnd && i < N - 1 && scrollY < connEnd) {
-                // Inside connector between i and i+1
                 activeIdx = i;
-                sceneProgress = 1 + (scrollY - diveEnd) / (connEnd - diveEnd); // 1..2
+                sceneProgress = 1 + (scrollY - diveEnd) / (connEnd - diveEnd);
                 break;
-            } else if (scrollY >= (i < N - 1 ? connEnd : diveEnd)) {
-                activeIdx = i;
-                sceneProgress = 2; // past this scene
+            } else if (scrollY >= connEnd) {
+                activeIdx = Math.min(i + 1, N - 1);
+                sceneProgress = 0;
             }
 
             accumulated = (i < N - 1) ? connEnd : diveEnd;
         }
 
+        // If at very end
+        if (progress >= 0.99) {
+            activeIdx = N - 1;
+            sceneProgress = 0.8; // show last scene with full text
+        }
+
         // ---- Update scenes ----
         scenes.forEach((sc, i) => {
-            if (i === activeIdx) {
+            if (i === activeIdx && sceneProgress <= 1) {
                 if (!sc.visible) {
                     sc.el.classList.add('active');
                     sc.visible = true;
                 }
-                // Camera zoom effect: scale from 1.15 → 1.0 over the dive
                 const t = Math.min(sceneProgress, 1);
                 const scale = 1.15 - (0.15 * easeOutCubic(t));
-                const translateY = -10 + (10 * easeOutCubic(t)); // slight rise
+                const translateY = -10 + (10 * easeOutCubic(t));
                 sc.img.style.transform = `scale(${scale}) translateY(${translateY}px)`;
                 sc.img.style.filter = `brightness(${0.55 + 0.1 * easeOutCubic(t)}) saturate(1.1)`;
+                sc.el.style.opacity = 1;
             } else if (i === activeIdx + 1 && sceneProgress > 1) {
-                // Incoming scene during crossfade
                 if (!sc.visible) {
                     sc.el.classList.add('active');
                     sc.visible = true;
                 }
-                const crossfadeT = sceneProgress - 1; // 0..1
-                sc.el.style.opacity = crossfadeT;
+                const crossfadeT = sceneProgress - 1;
+                sc.el.style.opacity = easeOutCubic(Math.min(crossfadeT, 1));
                 sc.img.style.transform = `scale(${1.15 - 0.15 * easeOutCubic(crossfadeT)})`;
+                sc.img.style.filter = 'brightness(0.55) saturate(1.1)';
             } else {
                 if (sc.visible) {
                     sc.el.classList.remove('active');
-                    sc.el.style.opacity = 0;
                     sc.visible = false;
                 }
+                sc.el.style.opacity = 0;
                 sc.img.style.transform = 'scale(1.15)';
             }
         });
 
-        // ---- Update copies (text) ----
+        // ---- Update copies ----
         copies.forEach((c, i) => {
-            if (i === activeIdx) {
-                // Fade in during first 30% of dive, fade out during last 20%
+            if (i === activeIdx && sceneProgress <= 1) {
                 let opacity = 0;
-                if (sceneProgress < 0.3) {
-                    opacity = sceneProgress / 0.3;
-                } else if (sceneProgress < 0.8) {
+                if (sceneProgress < 0.25) {
+                    opacity = sceneProgress / 0.25;
+                } else if (sceneProgress < 0.75) {
                     opacity = 1;
-                } else if (sceneProgress <= 1) {
-                    opacity = 1 - (sceneProgress - 0.8) / 0.2;
+                } else {
+                    opacity = 1 - (sceneProgress - 0.75) / 0.25;
                 }
                 c.style.opacity = Math.max(0, Math.min(1, opacity));
-                c.style.transform = `translate(-50%, calc(-50% + ${20 * (1 - opacity)}px))`;
+                c.style.transform = `translate(-50%, calc(-50% + ${15 * (1 - easeOutCubic(opacity))}px))`;
             } else {
                 c.style.opacity = 0;
             }
         });
 
         // ---- Nav dots ----
-        if (SECTIONS._dots) {
-            SECTIONS._dots.forEach((d, i) => {
-                d.classList.toggle('active', i === activeIdx);
-            });
-        }
+        dots.forEach((d, i) => {
+            d.classList.toggle('active', i === activeIdx);
+        });
 
         ticking = false;
     }
@@ -225,19 +227,10 @@ function mountScrollWorld(container, config) {
     }
 
     window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', () => {
-        document.body.style.height = `${totalHeight}px`;
-        onScroll();
-    });
+    window.addEventListener('resize', onScroll);
 
     // Initial render
     update();
-
-    // Preload first image
-    if (scenes[0]) {
-        const preload = new Image();
-        preload.src = SECTIONS[0].still;
-    }
 }
 
 function easeOutCubic(t) {
