@@ -15,7 +15,6 @@
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
 html {
-    overflow-x: hidden;
     scrollbar-width: thin;
     scrollbar-color: var(--sw-accent) transparent;
 }
@@ -24,7 +23,14 @@ body {
     background: var(--sw-bg);
     color: var(--sw-ink);
     font-family: var(--sw-font-body);
-    overflow-x: hidden;
+    margin: 0;
+}
+
+#world {
+    overflow: hidden;
+    position: fixed;
+    inset: 0;
+    z-index: 0;
 }
 
 /* ---- SKY (atmosphere behind everything) ---- */
